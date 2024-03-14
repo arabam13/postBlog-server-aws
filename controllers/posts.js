@@ -1,8 +1,94 @@
+import {
+  CloudFrontClient,
+  CreateInvalidationCommand,
+} from "@aws-sdk/client-cloudfront";
+import {
+  DeleteObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/cloudfront-signer";
+import crypto from "crypto";
+import dotenv from "dotenv";
 import asyncHandler from "express-async-handler";
-import fs from "fs";
-import path from "path";
+import sharp from "sharp";
 import PostModel from "../models/post.js";
 
+dotenv.config();
+
+const bucketName = process.env.AWS_BUCKET_NAMEE;
+const region = process.env.AWS_BUCKET_REGIONN;
+const accessKeyId = process.env.AWS_ACCESS_KEY;
+const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+
+const s3Client = new S3Client({
+  region,
+  credentials: {
+    accessKeyId,
+    secretAccessKey,
+  },
+});
+
+const cloudfront = new CloudFrontClient({
+  region,
+  credentials: {
+    accessKeyId,
+    secretAccessKey,
+  },
+});
+
+const generateFileName = (bytes = 32) =>
+  crypto.randomBytes(bytes).toString("hex");
+
+const sendImageToAWSAndGetImageUrl = async (req) => {
+  // Resize the image
+  const fileBuffer = await sharp(req.file.buffer)
+    .resize({ height: 391, width: 456, fit: "contain" })
+    .toBuffer();
+
+  // Configure the upload details to send to S3
+  const fileName = generateFileName();
+  const uploadParams = {
+    Bucket: bucketName,
+    Key: fileName,
+    Body: fileBuffer,
+    ContentType: req.file.mimetype,
+  };
+  // Send the upload to S3
+  await s3Client.send(new PutObjectCommand(uploadParams));
+
+  //set the url from cloudfront to expire in 1 minute
+  const imageUrl = `https://dpgbwslux0b39.cloudfront.net/${fileName}`;
+  const signedUrl = getSignedUrl({
+    keyPairId: process.env.CLOUDFRONT_KEYPAIR_ID,
+    privateKey: process.env.CLOUDFRONT_PRIVATE_KEY,
+    url: imageUrl,
+    dateLessThan: new Date(Date.now() + 1000 * 60),
+  });
+  return signedUrl;
+};
+
+const deleteImageFromAws = async (existingPost) => {
+  const imageName = existingPost.imagePath.split("?")[0].split("/")[3];
+  const deleteParams = {
+    Bucket: bucketName,
+    Key: imageName,
+  };
+  //delete the image from s3
+  await s3Client.send(new DeleteObjectCommand(deleteParams));
+  //invalidate the cloudfront cache
+  const cfCommand = new CreateInvalidationCommand({
+    DistributionId: process.env.CLOUDFRONT_DISTRIBUTION_ID,
+    InvalidationBatch: {
+      CallerReference: imageName,
+      Paths: {
+        Quantity: 1,
+        Items: ["/" + imageName],
+      },
+    },
+  });
+  await cloudfront.send(cfCommand);
+};
 export const PostController = {
   getPosts: asyncHandler(async (req, res) => {
     try {
@@ -12,6 +98,16 @@ export const PostController = {
         .skip(pageSize * (currentPage - 1))
         .limit(pageSize);
       const totolPosts = await PostModel.countDocuments();
+
+      for (let post of fetchedPosts) {
+        //set the url from cloudfront to expire in 1 minute
+        post.imagePath = getSignedUrl({
+          keyPairId: process.env.CLOUDFRONT_KEYPAIR_ID,
+          privateKey: process.env.CLOUDFRONT_PRIVATE_KEY,
+          url: post.imagePath.split("?")[0],
+          dateLessThan: new Date(Date.now() + 1000 * 60),
+        });
+      }
 
       return res.status(200).json({
         message: "Posts fetched successfully!",
@@ -28,6 +124,13 @@ export const PostController = {
       if (!existingPost) {
         return res.status(404).json({ message: "Post not found" });
       }
+      //set the url from cloudfront to expire in 1 minute
+      existingPost.imagePath = getSignedUrl({
+        keyPairId: process.env.CLOUDFRONT_KEYPAIR_ID,
+        privateKey: process.env.CLOUDFRONT_PRIVATE_KEY,
+        url: existingPost.imagePath.split("?")[0],
+        dateLessThan: new Date(Date.now() + 1000 * 60),
+      });
       return res.status(200).json(existingPost);
     } catch (err) {
       return res.status(500).json({ message: "Something went wrong. " + err });
@@ -35,11 +138,13 @@ export const PostController = {
   }),
   createPost: asyncHandler(async (req, res) => {
     try {
-      const url = req.protocol + "://" + req.get("host");
+      // const url = req.protocol + "://" + req.get("host");
+      const imagePath = await sendImageToAWSAndGetImageUrl(req);
       const createdPost = await PostModel.create({
         title: req.body.title,
         content: req.body.content,
-        imagePath: url + "/images/" + req.file.filename,
+        // imagePath: url + "/images/" + req.file.filename,
+        imagePath,
         creator: req.userData.userId,
       });
       return res.status(201).json({
@@ -69,15 +174,16 @@ export const PostController = {
       }
 
       if (req.file) {
-        const url = req.protocol + "://" + req.get("host");
-        const imagePath = url + "/images/" + req.file.filename;
         if (req.body.title) {
           existingPost.title = req.body.title;
         }
         if (req.body.content) {
           existingPost.content = req.body.content;
         }
-        existingPost.imagePath = imagePath;
+        //delete the old image from s3 and cloudfront
+        await deleteImageFromAws(existingPost);
+        //upload the new image to s3 and get the url
+        existingPost.imagePath = await sendImageToAWSAndGetImageUrl(req);
       } else {
         if (req.body.title) {
           existingPost.title = req.body.title;
@@ -98,7 +204,6 @@ export const PostController = {
   deletePost: asyncHandler(async (req, res) => {
     try {
       const existingPost = await PostModel.findById(req.params.id);
-      console.log("existingPost: ", existingPost);
       if (!existingPost) {
         return res.status(404).json({ message: "Book not found" });
       }
@@ -109,15 +214,12 @@ export const PostController = {
       }
       if (existingPost.imagePath) {
         try {
-          fs.unlinkSync(
-            path.join(
-              process.cwd(),
-              existingPost.imagePath.split("/").slice(-2).join("/")
-            )
-          );
-          // console.log("deleted");
+          await deleteImageFromAws(existingPost);
         } catch (err) {
           console.log(err);
+          return res
+            .status(500)
+            .json({ message: "Error deleting image from AWS" });
         }
       }
 

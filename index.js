@@ -1,4 +1,5 @@
 import bodyParser from "body-parser";
+import pkg from "cors";
 import express from "express";
 import path from "path";
 import { postsRoutes } from "./routes/posts.js";
@@ -16,18 +17,14 @@ app.use("/images", express.static(path.join("images")));
 connectDb();
 
 // define CORS middleware
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Origin, X-Requested-With, Content-Type, Accept, Authorization"
-  );
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PATCH, PUT, DELETE, OPTIONS"
-  );
-  next();
-});
+const cors = pkg;
+app.use(
+  cors({
+    origin: "*", // Autoriser tous les domaines
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], // Méthodes autorisées
+    allowedHeaders: ["Content-Type", "Authorization"], // En-têtes autorisés
+  })
+);
 
 //define error express middleware
 app.use((err, req, res, next) => {
@@ -37,3 +34,8 @@ app.use((err, req, res, next) => {
 
 app.use("/api/users", userRoutes);
 app.use("/api/posts", postsRoutes);
+
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log(`serve at http://localhost:${port}`);
+});

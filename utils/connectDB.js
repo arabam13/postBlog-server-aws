@@ -6,7 +6,11 @@ dotenv.config();
 // Connect to MongoDB
 export const connectDb = () =>
   mongoose
-    .connect(process.env.MONGODB_URL_DEV)
+    .connect(
+      process.env.NODE_ENV === "development"
+        ? process.env.MONGODB_URL_DEV
+        : process.env.MONGODB_URI_PROD
+    )
     .then(() => {
       console.log("Connected to database!");
     })

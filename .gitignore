@@ -27,3 +27,5 @@ yarn-error.log*
 pnpm-lock.yaml
 
 /images
+private_key.pem
+public_key.pem
