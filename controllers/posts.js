@@ -92,17 +92,12 @@ const deleteImageFromAws = async (existingPost) => {
 export const PostController = {
   getPosts: asyncHandler(async (req, res) => {
     try {
-      console.log("req.query: ", req.query);
       const pageSize = +req.query.pagesize || 5;
-      console.log("pageSize: ", pageSize);
       const currentPage = +req.query.page || 1;
-      // console.log("currentPage: ", currentPage);
       const fetchedPosts = await PostModel.find()
         .skip(pageSize * (currentPage - 1))
         .limit(pageSize);
-      // console.log("fetchedPosts: ", fetchedPosts);
       const totolPosts = await PostModel.countDocuments();
-      // console.log("totolPosts: ", totolPosts);
 
       for (let post of fetchedPosts) {
         //set the url from cloudfront to expire in 1 minute
