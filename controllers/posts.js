@@ -138,15 +138,10 @@ export const PostController = {
   }),
   createPost: asyncHandler(async (req, res) => {
     try {
-      console.log("req.file: ", req.file);
-      console.log("req.protocol: ", req.protocol);
-      console.log("req.host: ", req.get("host"));
-      // const url = req.protocol + "://" + req.get("host");
       const imagePath = await sendImageToAWSAndGetImageUrl(req);
       const createdPost = await PostModel.create({
         title: req.body.title,
         content: req.body.content,
-        // imagePath: url + "/images/" + req.file.filename,
         imagePath,
         creator: req.userData.userId,
       });
