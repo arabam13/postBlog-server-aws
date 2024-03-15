@@ -11,6 +11,7 @@ export const app = express();
 // define body parser
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false }));
 app.use("/images", express.static(path.join("images")));
 
 // Connect to MongoDB
