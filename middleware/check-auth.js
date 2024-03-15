@@ -7,7 +7,7 @@ export const checkAuth = (req, res, next) => {
       console.log("token: ", token);
       console.log("decodedToken: ", decodedToken);
       if (err) {
-        consle.log("err: ", err);
+        console.log("err: ", err);
         return res.status(403).json({ message: "Invalid Token" });
       }
       req.userData = {
